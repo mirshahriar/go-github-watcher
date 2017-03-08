@@ -1,7 +1,6 @@
 package watcher
 
 import (
-	"fmt"
 	"github.com/aerokite/go-github-watcher/pkg/github"
 )
 
