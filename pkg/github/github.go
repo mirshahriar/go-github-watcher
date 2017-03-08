@@ -28,9 +28,10 @@ func CheckRateLimit() (bool, error) {
 		now := time.Now()
 		resetTime := time.Unix(int64(rateLimit.Rate.Reset), 0)
 		log.Println(
-			fmt.Sprintf(`API rate limit exceeded.
-			Rate limit will be reset after "%v" minute(s)`, resetTime.Sub(now).Minutes()),
+			fmt.Sprintf("API rate limit exceeded. Rate limit will be reset after %d minute(s)",
+				int(resetTime.Sub(now).Minutes())),
 		)
+		return false, nil
 	}
 	return true, nil
 }
