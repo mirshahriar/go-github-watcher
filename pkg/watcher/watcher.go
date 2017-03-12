@@ -59,7 +59,9 @@ func (w *watcher) Schedule(expr string) (*job, error) {
 
 func (j *job) initializeCache() {
 	setData := func() {
-		j.biblio.InitializeCache(j.organization, j.repositories...)
+		if err := j.biblio.InitializeCache(j.organization, j.repositories...); err != nil {
+			log.Fatal(err)
+		}
 	}
 	j.Once.Do(setData)
 }
@@ -72,6 +74,8 @@ func (j *job) watch() {
 				fmt.Sprintf("Rate reset in %v at %v",
 					rateLimitError.Rate.Reset.Time.Sub(time.Now()),
 					rateLimitError.Rate.Reset.UTC().String()))
+		} else {
+			log.Println(err)
 		}
 	} else {
 		comapareData(j.biblio.Cache, organizationReposInfoMap)

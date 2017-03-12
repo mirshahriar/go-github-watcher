@@ -42,6 +42,9 @@ func (b *Biblio) listRepositoriesByOrg(org string) ([]*github.Repository, error)
 		if err != nil {
 			return nil, err
 		}
+		if len(repositories) == 0 {
+			break
+		}
 		allRepositories = append(allRepositories, repositories...)
 	}
 	return allRepositories, nil
@@ -85,7 +88,7 @@ func (b *Biblio) countNewOpenIssues(org, repo string, lastSyncedIssue int) (int,
 			return 0, 0, err
 		}
 		if len(issues) == 0 {
-			return 0, newLastSyncedIssue, nil
+			break
 		}
 
 		for _, issue := range issues {
@@ -115,7 +118,7 @@ func (b *Biblio) getStargazers(org, repo string) ([]string, error) {
 			return nil, err
 		}
 		if len(stargazers) == 0 {
-			return users, nil
+			break
 		}
 
 		for _, stargazer := range stargazers {
@@ -156,10 +159,8 @@ func (b *Biblio) GetRepositoriesInfo(org string, repositoris ...string) (map[str
 		if err != nil {
 			return nil, err
 		}
-		if count > 0 {
-			repoInfo.LastSyncedIssue.IssueNumber = issueNumber
-			repoInfo.LastSyncedIssue.Count = count
-		}
+		repoInfo.LastSyncedIssue.IssueNumber = issueNumber
+		repoInfo.LastSyncedIssue.Count = count
 
 		// Track Stargazers
 		users, err := b.getStargazers(org, repoName)
