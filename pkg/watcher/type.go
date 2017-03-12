@@ -10,7 +10,8 @@ import (
 type watcher struct {
 	organization string
 	repositories []string
-	store        map[string]*github.RepoInfo
+	githubToken  string
+	biblio       *github.Biblio
 	sync.Once
 }
 

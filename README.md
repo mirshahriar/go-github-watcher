@@ -6,13 +6,13 @@ Watch Github organization repositories and get notification
 
 #### Check github repos
 
-- [ ] Who has hit star button in your repository?
-- [ ] Who has hit unstar button in your repository?
-- [ ] Any new Issue? How many?
+- [X] Who has hit star button in your repository?
+- [X] Who has hit unstar button in your repository?
+- [X] Any new Issue? How many?
 - [ ] Who is watching your repo?
 - [ ] Any new pull request?
 - [ ] Any new release?
-- [ ] Any one fork your repo?
+- [ ] Any one fork your repo? How many?
 
 #### Send notifications
 

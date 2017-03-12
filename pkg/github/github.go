@@ -1,196 +1,188 @@
 package github
 
 import (
-	"encoding/json"
-	"fmt"
-	"net/http"
-	//"strings"
-	"log"
-	"strings"
+	"context"
 	"sync"
-	"time"
+
+	"github.com/aerokite/go-github-watcher/pkg/transport"
+	"github.com/google/go-github/github"
 )
 
-func CheckRateLimit() (bool, error) {
-	rateLimitUrl := "https://api.github.com/rate_limit"
-	response, err := http.Get(rateLimitUrl)
-	if err != nil {
-		return false, err
-	}
-	defer response.Body.Close()
+func NewGithubClient() *github.Client {
+	return github.NewClient(transport.NewMemoryCacheTransport().Client())
+}
 
-	var rateLimit RateLimit
-	if err := json.NewDecoder(response.Body).Decode(&rateLimit); err != nil {
-		return false, err
+func NewGithubClientWithToken(token string) *github.Client {
+	return github.NewClient(transport.NewMemoryCacheTransport().SetToken(token).Client())
+}
+
+func NewBiblio(client *github.Client) *Biblio {
+	biblio := &Biblio{
+		Cache:  make(map[string]*RepositoryInfo),
+		Client: client,
+	}
+	if client == nil {
+		biblio.Client = NewGithubClient()
 	}
 
-	if rateLimit.Rate.Remaining == 0 {
-		now := time.Now()
-		resetTime := time.Unix(int64(rateLimit.Rate.Reset), 0)
-		log.Println(
-			fmt.Sprintf("API rate limit exceeded. Rate limit will be reset after %d minute(s)",
-				int(resetTime.Sub(now).Minutes())),
+	return biblio
+}
+
+func (b *Biblio) listRepositoriesByOrg(org string) ([]*github.Repository, error) {
+	allRepositories := make([]*github.Repository, 0)
+	for i := 1; ; i++ {
+		repositories, _, err := b.Client.Repositories.ListByOrg(context.Background(), org,
+			&github.RepositoryListByOrgOptions{
+				ListOptions: github.ListOptions{
+					Page:    i,
+					PerPage: 100,
+				},
+			},
 		)
-		return false, nil
-	}
-	return true, nil
-}
-
-func GetAllRepos(org string) ([]*GithubRepo, error) {
-	orgRepoUrl := fmt.Sprintf("https://api.github.com/orgs/%v/repos", org)
-
-	allGithubRepos := make([]*GithubRepo, 0)
-	for i := 1; ; i++ {
-		response, err := http.Get(orgRepoUrl + fmt.Sprintf("?page=%v", i))
 		if err != nil {
 			return nil, err
 		}
-		defer response.Body.Close()
+		allRepositories = append(allRepositories, repositories...)
+	}
+	return allRepositories, nil
+}
 
-		var repos []*GithubRepo
-		if err := json.NewDecoder(response.Body).Decode(&repos); err != nil {
+func (b *Biblio) getRepositories(org string, repositories ...string) ([]*github.Repository, error) {
+	var err error
+	var allRepositories []*github.Repository
+	if len(repositories) == 0 {
+		allRepositories, err = b.listRepositoriesByOrg(org)
+		if err != nil {
 			return nil, err
 		}
+	} else {
+		for _, repo := range repositories {
+			repository, _, err := b.Client.Repositories.Get(context.Background(), org, repo)
+			if err != nil {
+				return nil, err
+			}
 
-		if len(repos) == 0 {
-			break
+			allRepositories = append(allRepositories, repository)
 		}
-		allGithubRepos = append(allGithubRepos, repos...)
 	}
-
-	return allGithubRepos, nil
+	return allRepositories, nil
 }
 
-func GetRepo(orgRepoUrl string) (*GithubRepo, error) {
-	response, err := http.Get(orgRepoUrl)
-	if err != nil {
-		return nil, err
-	}
-	defer response.Body.Close()
-
-	var repo GithubRepo
-	if err := json.NewDecoder(response.Body).Decode(&repo); err != nil {
-		return nil, err
-	}
-
-	return &repo, nil
-}
-
-func CountNewOpenIssues(issuesUrl string, lastSyncedOpenIssue int) (count int64, lastOpenIssue int, err error) {
+func (b *Biblio) countNewOpenIssues(org, repo string, lastSyncedIssue int) (int, int, error) {
+	newLastSyncedIssue := lastSyncedIssue
+	count := 0
 	var once sync.Once
-	issuesUrl = strings.TrimRight(issuesUrl, "{/number}")
-	lastOpenIssue = lastSyncedOpenIssue
-	var response *http.Response
+
 	for i := 1; ; i++ {
-		response, err = http.Get(issuesUrl + fmt.Sprintf("?page=%v", i))
+		var issues []*github.Issue
+		issues, _, err := b.Client.Issues.ListByRepo(context.Background(), org, repo, &github.IssueListByRepoOptions{
+			ListOptions: github.ListOptions{
+				Page:    i,
+				PerPage: 100,
+			},
+		})
 		if err != nil {
-			return
+			return 0, 0, err
 		}
-		defer response.Body.Close()
-
-		var issues RepoIssues
-		if err = json.NewDecoder(response.Body).Decode(&issues); err != nil {
-			return
-		}
-
 		if len(issues) == 0 {
-			return
+			return 0, newLastSyncedIssue, nil
 		}
 
 		for _, issue := range issues {
-			if issue.Number <= lastSyncedOpenIssue {
-				return
+			if *issue.Number <= lastSyncedIssue {
+				return count, newLastSyncedIssue, nil
 			} else {
 				once.Do(func() {
-					lastOpenIssue = issue.Number
+					newLastSyncedIssue = *issue.Number
 				})
 				count++
 			}
 		}
 	}
-
-	return
+	return count, newLastSyncedIssue, nil
 }
 
-func GetStargazers(stargazersURL string) (users []string, err error) {
-	var response *http.Response
+func (b *Biblio) getStargazers(org, repo string) ([]string, error) {
+	users := make([]string, 0)
 	for i := 1; ; i++ {
-		response, err = http.Get(stargazersURL + fmt.Sprintf("?page=%v", i))
-		if err != nil {
-			return
-		}
-		defer response.Body.Close()
-
-		var stargazers RepoStargazers
-		if err = json.NewDecoder(response.Body).Decode(&stargazers); err != nil {
-			return
-		}
-
-		if len(stargazers) == 0 {
-			return
-		}
-
-		for _, user := range stargazers {
-			users = append(users, user.Login)
-		}
-	}
-	return
-}
-
-func GetData(org string, repositoris []string, storedData map[string]*RepoInfo) (map[string]*RepoInfo, error) {
-	newData := make(map[string]*RepoInfo)
-
-	letMeCheck, err := CheckRateLimit()
-	if err != nil {
-		return nil, err
-	}
-	if !letMeCheck {
-		return storedData, nil
-	}
-
-	var allGithubRepos []*GithubRepo
-	if len(repositoris) == 0 {
-		allGithubRepos, err = GetAllRepos(org)
+		stargazers, _, err := b.Client.Activity.ListStargazers(context.Background(), org, repo,
+			&github.ListOptions{
+				Page:    i,
+				PerPage: 100,
+			},
+		)
 		if err != nil {
 			return nil, err
 		}
-	} else {
-		for _, repo := range repositoris {
-			url := fmt.Sprintf("https://api.github.com/repos/%v/%v", org, repo)
-			gitRepo, err := GetRepo(url)
-			if err != nil {
-				return nil, err
-			}
-			allGithubRepos = append(allGithubRepos, gitRepo)
+		if len(stargazers) == 0 {
+			return users, nil
+		}
+
+		for _, stargazer := range stargazers {
+			users = append(users, *(stargazer.User.Login))
 		}
 	}
+	return users, nil
+}
 
-	for _, repo := range allGithubRepos {
-		repoInfo := new(RepoInfo)
+func (b *Biblio) GetRepositoriesInfo(org string, repositoris ...string) (map[string]*RepositoryInfo, error) {
+	allRepositories, err := b.getRepositories(org, repositoris...)
+	if err != nil {
+		return nil, err
+	}
+
+	cachedOrganizationReposInfo := b.Cache
+	newOrganizationReposInfoMap := make(map[string]*RepositoryInfo)
+
+	for _, repo := range allRepositories {
+		repoName := ""
+		if repo.Name != nil {
+			repoName = *repo.Name
+		}
+
+		if repoName == "" {
+			continue
+		}
+
+		cachedRepoInfo := cachedOrganizationReposInfo[repoName]
+		repoInfo := new(RepositoryInfo)
 
 		// Track Issues
 		lastSyncedIssue := 0
-		if info, found := storedData[repo.Name]; found {
-			lastSyncedIssue = info.LastSyncedIssue.IssueNumber
+		if cachedRepoInfo != nil {
+			lastSyncedIssue = cachedRepoInfo.LastSyncedIssue.IssueNumber
 		}
-		count, number, err := CountNewOpenIssues(repo.IssuesURL, lastSyncedIssue)
+		count, issueNumber, err := b.countNewOpenIssues(org, repoName, lastSyncedIssue)
 		if err != nil {
 			return nil, err
 		}
 		if count > 0 {
-			repoInfo.LastSyncedIssue.IssueNumber = number
+			repoInfo.LastSyncedIssue.IssueNumber = issueNumber
 			repoInfo.LastSyncedIssue.Count = count
 		}
 
 		// Track Stargazers
-		users, err := GetStargazers(repo.StargazersURL)
+		users, err := b.getStargazers(org, repoName)
 		if err != nil {
 			return nil, err
 		}
 		repoInfo.Stargazers = users
 
-		newData[repo.Name] = repoInfo
-	}
+		// Track
+		if repo.ForksCount != nil {
+			repoInfo.ForksCount = *repo.ForksCount
+		}
 
-	return newData, nil
+		newOrganizationReposInfoMap[repoName] = repoInfo
+	}
+	return newOrganizationReposInfoMap, nil
+}
+
+func (b *Biblio) InitializeCache(org string, repositories ...string) error {
+	repositoriesInfo, err := b.GetRepositoriesInfo(org, repositories...)
+	if err != nil {
+		return err
+	}
+	b.Cache = repositoriesInfo
+	return nil
 }

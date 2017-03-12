@@ -2,19 +2,25 @@ package watcher
 
 import (
 	"errors"
+	"fmt"
 	"log"
 	"os"
+	"time"
 
 	"github.com/aerokite/go-github-watcher/pkg/github"
+	gogithub "github.com/google/go-github/github"
 	"github.com/robfig/cron"
 )
 
 func New() *watcher {
 	w := &watcher{
 		repositories: make([]string, 0),
-		store:        make(map[string]*github.RepoInfo),
 	}
 	return w
+}
+
+func (w *watcher) SetGithubToken(token string) {
+	w.githubToken = token
 }
 
 func (w *watcher) SetOrganization(name string) {
@@ -26,6 +32,12 @@ func (w *watcher) AddRepositories(names ...string) {
 }
 
 func (w *watcher) Schedule(expr string) (*job, error) {
+	if w.githubToken == "" {
+		w.biblio = github.NewBiblio(nil)
+	} else {
+		w.biblio = github.NewBiblio(github.NewGithubClientWithToken(w.githubToken))
+	}
+
 	j := &job{
 		watcher: w,
 		cron:    cron.New(),
@@ -37,7 +49,7 @@ func (w *watcher) Schedule(expr string) (*job, error) {
 		return nil, errors.New(`Must provide cron expression`)
 	}
 
-	j.initializeStore()
+	j.initializeCache()
 
 	if err := j.cron.AddFunc(expr, j.watch); err != nil {
 		return nil, err
@@ -45,24 +57,25 @@ func (w *watcher) Schedule(expr string) (*job, error) {
 	return j, nil
 }
 
-func (j *job) initializeStore() {
+func (j *job) initializeCache() {
 	setData := func() {
-		data, err := github.GetData(j.organization, j.repositories, j.store)
-		if err != nil {
-			log.Fatalln(err)
-		}
-		j.store = data
+		j.biblio.InitializeCache(j.organization, j.repositories...)
 	}
 	j.Once.Do(setData)
 }
 
 func (j *job) watch() {
-	newData, err := github.GetData(j.organization, j.repositories, j.store)
+	organizationReposInfoMap, err := j.biblio.GetRepositoriesInfo(j.organization, j.repositories...)
 	if err != nil {
-		log.Println(err.Error())
+		if rateLimitError, ok := err.(*gogithub.RateLimitError); ok {
+			log.Println("Hit rate limit.",
+				fmt.Sprintf("Rate reset in %v at %v",
+					rateLimitError.Rate.Reset.Time.Sub(time.Now()),
+					rateLimitError.Rate.Reset.UTC().String()))
+		}
 	} else {
-		comapareData(j.store, newData)
-		j.store = newData
+		comapareData(j.biblio.Cache, organizationReposInfoMap)
+		j.biblio.Cache = organizationReposInfoMap
 	}
 }
 
