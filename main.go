@@ -9,6 +9,8 @@ import (
 func main() {
 	watcher := watcher.New()
 
+	watcher.SetGithubToken("")
+
 	// Set organization name
 	watcher.SetOrganization("")
 

@@ -5,7 +5,7 @@ import (
 )
 
 // Compare old and new data
-func comapareData(old, new map[string]*github.RepoInfo) {
+func comapareData(cacheData, newData map[string]*github.RepositoryInfo) {
 	/*
 		1. Who has hit star button in your repository?
 		2. Who has hit unstar button in your repository?
