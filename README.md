@@ -17,7 +17,3 @@ Watch Github organization repositories and get notification
 #### Send notifications
 
 - [ ] Hipchat
-
-### Limitation
-
-* Github has Rate Limit 60/min without Authorized APP.
